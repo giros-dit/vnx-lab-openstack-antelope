@@ -21,13 +21,13 @@ sudo vnx -f openstack_lab.xml -v -x start-all-from-scratch
 
 - Shutdown the scenario:
 
-vnx -f openstack_lab.xml -v --shutdown
+sudo vnx -f openstack_lab.xml -v --shutdown
 # wait for all VMs to stop (all consoles closed)
 
 - Consolidate the changes made to the controller in a new rootfs:
 
 cd filesystems
-sudo ./create_rootfs_lxc_ubuntu64-18.04-ostack-controller-cfgd 
+sudo ./create_rootfs_lxc_ubuntu64-22.04-ostack-controller-cfgd 
 cd ..
 sudo vnx -f openstack_lab.xml -v -P
 
