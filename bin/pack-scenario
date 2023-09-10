@@ -1,0 +1,21 @@
+#!/bin/bash
+
+SCENARIO=openstack_lab-antelope_4n_classic_ovs.xml
+VERS='02'
+
+# Move to the upper directory where this script is
+cdir=$( dirname $0 )
+cd $cdir/..
+
+vnx --pack $SCENARIO \
+    --pack-version $VERS \
+    --pack-add-files \
+        00-readme.txt 00-readme-admin.txt \
+        openstack_lab.xml \
+        openstack_lab-vms-vlan.xml \
+        openstack_lab-cmp34.xml openstack_lab-stein_4n_classic_ovs-cmp34.xml \
+        openstack_lab-cmp56.xml openstack_lab-stein_4n_classic_ovs-cmp56.xml \
+        openstack_lab-cmp78.xml openstack_lab-stein_4n_classic_ovs-cmp78.xml \
+        bin shared \
+    $1 $2 $3
+

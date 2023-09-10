@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenStack Skyline APIServer
+
+[Service]
+User=skyline
+Group=skyline
+Type=simple
+ExecStart=/usr/local/bin/gunicorn -c /etc/skyline/gunicorn.py skyline_apiserver.main:app
+LimitNOFILE=32768
+Restart=on-failure
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

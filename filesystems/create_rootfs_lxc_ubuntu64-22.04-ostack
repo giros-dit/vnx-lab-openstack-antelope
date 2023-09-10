@@ -1,0 +1,409 @@
+#!/bin/bash
+
+#
+# Name: create-rootfs
+#
+# Description: creates a customized LXC VNX rootfs starting from a basic VNX LXC rootfs
+#
+# This file is part of VNX package.
+#
+# Authors: David Fernández (david.fernandez@upm.es)
+#          Raúl Álvarez (raul.alvarez.pinilla@alumnos.upm.es)
+# Copyright (C) 2023 DIT-UPM
+#           Departamento de Ingeniería de Sistemas Telemáticos
+#           Universidad Politécnica de Madrid
+#           SPAIN
+#           
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#
+# An online copy of the licence can be found at http://www.gnu.org/copyleft/gpl.html
+#
+
+# 
+# Configuration
+#
+BASEROOTFSNAME=vnx_rootfs_lxc_ubuntu64-22.04-v025
+ROOTFSNAME=vnx_rootfs_lxc_ubuntu64-22.04-v025-openstack
+ROOTFSLINKNAME="rootfs_lxc_ubuntu64-ostack"
+
+# Packages to be installed
+# 2016-09: removed chrony as it does not work inside a container
+PACKAGES="wget iperf iperf3 traceroute telnet xterm curl ethtool man-db bash-completion wireshark-gtk xauth crudini python3-pip"
+
+#
+# Customization script
+#
+
+CUSTOMIZATIONSCRIPT=$(cat <<EOF
+
+# Remove startup scripts
+#systemctl disable apache2.service
+# echo manual | sudo tee /etc/init/isc-dhcp-server.override
+
+# Modify failsafe script to avoid delays on startup
+#sed -i -e 's/.*sleep [\d]*.*/\tsleep 1/' /etc/init/failsafe.conf
+
+# Disable auto-upgrades if enabled
+sed -i -e 's/"1"/"0"/g' /etc/apt/apt.conf.d/20auto-upgrades
+sudo apt-get -y remove unattended-upgrades
+
+# Add ~/bin to root PATH
+sed -i -e '\$aPATH=\$PATH:~/bin' /root/.bashrc
+
+# Allow root login by ssh
+sed -i -e '/PermitRootLogin/d' /etc/ssh/sshd_config
+echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+
+# Set locale to en_US. If set to es_ES a python error related to unicode strings arises when 
+# calling "openstack service create..." commands
+#echo "LANG=en_US.UTF-8" > /etc/default/locale
+
+# Eliminate long delays at startup due to network services
+sed -i -e 's/^timeout .*/timeout 10;/' /etc/dhcp/dhclient.conf 
+systemctl mask systemd-networkd-wait-online.service 
+
+# Delete the "mesg n" command in root's .profile to avoid the nasty message
+# "mesg: ttyname failed: No such device" when executing commands with lxc-attach
+#sed -i '/^mesg n/d' /root/.profile
+
+
+export DEBIAN_FRONTEND=noninteractive
+
+# Upgrade pip
+pip3 install --upgrade pip
+
+# STEP 1: Environment
+# Openstack basic packages
+apt -y install software-properties-common
+add-apt-repository -y cloud-archive:antelope
+apt update
+apt -y dist-upgrade
+apt -y install python3-openstackclient
+apt -y install git gettext
+#apt -y install apache2 libapache2-mod-wsgi-py3
+
+## SQL database
+debconf-set-selections <<< 'mariadb-server mysql-server/root_password password xxxx'
+debconf-set-selections <<< 'mariadb-server mysql-server/root_password_again password xxxx'
+apt -y install mariadb-server python3-mysqldb
+systemctl disable mariadb
+
+## Message queue
+apt -y install rabbitmq-server
+systemctl disable rabbitmq-server
+
+#
+## Memcached
+apt -y install memcached python3-memcache
+systemctl disable memcached
+
+## etcd
+apt -y install etcd
+systemctl disable etcd
+
+# Mongodb for Telemetry service
+#apt-get -y install mongodb-server mongodb-clients python-pymongo
+#service mongodb stop
+#rm /var/lib/mongodb/journal/prealloc.*
+#service mongodb start
+
+
+# STEP 2: Identity service
+apt -y install keystone 
+
+# STEP 3: Image service (Glance)
+apt -y install glance 
+systemctl disable glance-api
+
+# STEP 3b: Placement service
+apt -y install placement-api
+
+#
+# STEP 4: Compute service (Nova)
+#
+# controller node
+apt -y install nova-api nova-conductor nova-novncproxy nova-scheduler 
+systemctl disable nova-api
+systemctl disable nova-conductor
+systemctl disable nova-novncproxy
+systemctl disable nova-scheduler
+# compute nodes
+apt -y install nova-compute
+systemctl disable nova-compute
+
+#
+# STEP 5: Network service (Neutron)
+#
+# controller node
+apt -y install neutron-server neutron-plugin-ml2 #python3-neutron-fwaas python3-neutron-fwaas-dashboard 
+systemctl disable neutron-server
+# network and compute nodes
+apt -y install neutron-openvswitch-agent neutron-l3-agent neutron-dhcp-agent neutron-metadata-agent
+systemctl disable neutron-openvswitch-agent
+systemctl disable neutron-l3-agent
+systemctl disable neutron-dhcp-agent
+systemctl disable neutron-metadata-agent
+ovs-vsctl del-br br-int
+
+#
+# STEP 6: Dashboard service
+#
+apt -y install openstack-dashboard
+pip3 install neutron-fwaas neutron-fwaas-dashboard
+
+#
+# STEP 8: Heat service
+#
+apt -y install heat-api heat-api-cfn heat-engine
+systemctl disable heat-api
+systemctl disable heat-api-cfn
+systemctl disable heat-engine
+
+#
+# STEP 10: Gnocchi and Ceilometer service
+#
+apt-get -y install gnocchi-api gnocchi-metricd python3-gnocchiclient
+systemctl disable gnocchi-metricd.service
+
+apt-get -y install ceilometer-agent-central ceilometer-agent-notification
+systemctl disable ceilometer-agent-central.service ceilometer-agent-notification.service
+
+apt-get -y install ceilometer-agent-compute
+systemctl disable ceilometer-agent-compute.service
+
+#
+# STEP 11: Skyline
+#
+apt-get -y install npm python-is-python3 nginx
+npm install -g yarn
+systemctl disable nginx.service
+
+#
+# STEP 12: Octavia LB
+#
+apt -y install octavia-api octavia-health-manager octavia-housekeeping octavia-worker python3-ovn-octavia-provider python3-octavia python3-octaviaclient
+systemctl disable octavia-api.service octavia-health-manager.service octavia-housekeeping.service octavia-worker.service
+
+
+#apt-get -y install neutron-lbaasv2-agent
+#systemctl disable neutron-lbaasv2-agent.service
+#sed -i -e 's/if value < 0/if int(value) < 0/' /usr/lib/python3/dist-packages/neutron_lbaas/db/loadbalancer/models.py 
+#rm /usr/lib/python3/dist-packages/neutron_lbaas/db/loadbalancer/__pycache__/models.cpython-36.pyc 
+
+# Disable libvirt and haproxy daemons
+systemctl disable libvirtd.service libvirt-guests.service 
+systemctl disable haproxy.service
+# Disable virbr0 network autostart
+rm /etc/libvirt/qemu/networks/default.xml
+
+# Enable bash completion (uncomment lines in /etc/bash.bashrc)
+l1=\$( cat -n /etc/bash.bashrc | egrep "# enable bash completion" | awk '{ print \$1 }' )
+l1=\$(( l1+1 ))
+l2=\$( cat -n /etc/bash.bashrc | egrep "# sudo hint" | awk '{ print \$1 }' )
+l2=\$(( l2-1 ))
+sed -i "\$l1,\$l2 s/^#//" /etc/bash.bashrc
+
+EOF
+)
+
+function customize_config {
+
+  # Modifications to config and other files in the directory where the rootfs is located
+  # config file is located here: ${ROOTFSNAME}/config
+
+cat << EOF >> ${ROOTFSNAME}/config
+
+# Create /dev/net/tun
+lxc.cgroup.devices.allow = c 10:200 rwm
+lxc.hook.autodev = sh -c "modprobe tun; cd \${LXC_ROOTFS_MOUNT}/dev; mkdir net; mknod net/tun c 10 200; chmod 0666 net/tun"
+
+# Create /dev/kvm
+lxc.cgroup.devices.allow = c 10:232 rwm
+lxc.hook.autodev = sh -c "cd \${LXC_ROOTFS_MOUNT}/dev; mknod -m 660 kvm c 10 232; chown root:\$(grep kvm \${LXC_ROOTFS_MOUNT}/etc/group | awk -F ':' '{print \$3}') kvm"
+EOF
+ 
+
+}
+
+
+#
+# Do not modify under this line (or do it with care...)
+#
+
+function customize_rootfs {
+
+  echo "-----------------------------------------------------------------------"
+  echo "Customizing rootfs..."
+  echo "--"
+  #echo "$CUSTOMIZATIONSCRIPT"
+  #echo "lxc-attach -n $ROOTFSNAME -P $CDIR -- bash -c \"$CUSTOMIZATIONSCRIPT\" -P $CDIR"
+  lxc-attach -n $ROOTFSNAME -P $CDIR -- bash -c "$CUSTOMIZATIONSCRIPT" -P $CDIR
+
+}
+
+function create_new_rootfs {
+
+  #clear
+
+  echo "-----------------------------------------------------------------------"
+  echo "Deleting new rootfs directory if already exists..."
+  rm -rf ${ROOTFSNAME}
+  if [ -L ${ROOTFSLINKNAME} ]; then
+    rm ${ROOTFSLINKNAME}
+  fi
+  # Create a tmp dir
+  TMPDIR=$( mktemp --tmpdir=. -td tmp-rootfs.XXXXXX )
+  echo "TMPDIR=$TMPDIR"
+  cd $TMPDIR
+
+  # Download base rootfs
+  echo "-----------------------------------------------------------------------"
+  echo "Downloading base rootfs..."
+  vnx_download_rootfs -r ${BASEROOTFSNAME}.tgz
+
+  mv ${BASEROOTFSNAME} ../${ROOTFSNAME}
+  rm -f ${BASEROOTFSNAME}.tgz
+  cd .. 
+  rmdir $TMPDIR
+
+  echo "--"
+  echo "Changing rootfs config file..."
+  # Change rootfs config to adapt it to the directory where is has been downloaded
+  # Get LXC version on this system
+  LXCVERS=$( lxc-start --version )
+  [[ "$LXCVERS" =~ ^(2\.1|3\.|4|5) ]] && LXCVERS=new || LXCVERS=old
+  # Get format version of image config file
+  grep -q 'lxc.rootfs.path' ${ROOTFSNAME}/config && CONFIGVERS=new || CONFIGVERS=old
+  echo "LXCVERS=$LXCVERS; CONFIGVERS=$CONFIGVERS"
+  echo "Config file: ${ROOTFSNAME}/config"
+
+  if [ $LXCVERS == 'new' ]; then
+    if [ $CONFIGVERS == 'old' ]; then
+        echo "Converting config file to new format..."
+        cp ${ROOTFSNAME}/config ${ROOTFSNAME}/config.bak
+        sed -i -e 's/lxc.rootfs\s*=/lxc.rootfs.path =/g' -e 's/lxc.utsname\s*=/lxc.uts.name =/g' \
+               -e 's/lxc.mount\s*=/lxc.mount.fstab =/g' -e 's/lxc.tty\s*=/lxc.tty.max =/g' \
+               -e 's/lxc.network.type\s*=/lxc.net.0.type =/g' -e 's/lxc.network.link\s*=/lxc.net.0.link =/g' \
+               -e 's/lxc.network.flags\s*=/lxc.net.0.flags =/g' -e 's/lxc.network.hwaddr\s*=/lxc.net.0.hwaddr =/g' \
+               -e '/lxc.rootfs.backend\s*=.*/d' \               
+               ${ROOTFSNAME}/config
+    fi
+    [ ! -f ${ROOTFSNAME}/fstab ] && touch ${ROOTFSNAME}/fstab
+    sed -i -e '/lxc\.rootfs\.path/d' -e '/lxc\.mount\.fstab/d' ${ROOTFSNAME}/config
+    echo "
+lxc.rootfs.path = $CDIR/${ROOTFSNAME}/rootfs
+lxc.mount.fstab = $CDIR/${ROOTFSNAME}/fstab
+" >> ${ROOTFSNAME}/config
+  else 
+    # LXC old version
+    if [ $CONFIGVERS == 'new' ]; then
+        echo "Converting config file to old format..."
+        cp ${ROOTFSNAME}/config ${ROOTFSNAME}/config.bak
+        sed -i -e 's/lxc.rootfs.path\s*=\s*dir:/lxc.rootfs =/g' \
+      		   -e 's/lxc.rootfs.path\s*=/lxc.rootfs =/g' -e 's/lxc.uts.name\s*=/lxc.utsname =/g' \
+               -e 's/lxc.mount\s*=/lxc.mount.fstab =/g ' -e 's/lxc.tty.max\s*=/lxc.tty =/g' \
+               -e 's/lxc.net.0.type\s*=/lxc.network.type =/g' -e 's/lxc.net.0.link\s*=/lxc.network.link =/g' \
+               -e 's/lxc.net.0.flags\s*=/lxc.network.flags =/g' -e 's/lxc.net.0.hwaddr\s*=/lxc.network.hwaddr =/g' \
+               ${ROOTFSNAME}/config
+    fi
+    [ ! -f ${ROOTFSNAME}/fstab ] && touch ${ROOTFSNAME}/fstab
+  sed -i -e '/lxc.rootfs/d' -e '/lxc.mount/d' ${ROOTFSNAME}/config
+  echo "
+lxc.rootfs = $CDIR/${ROOTFSNAME}/rootfs
+lxc.mount = $CDIR/${ROOTFSNAME}/fstab
+" >> ${ROOTFSNAME}/config
+
+  fi
+
+}
+
+function start_and_install_packages {
+
+  echo "-----------------------------------------------------------------------"
+  echo "Installing packages in rootfs..."
+
+  # Install packages in rootfs
+  echo "lxc-start --daemon -n $ROOTFSNAME -f ${ROOTFSNAME}/config -P $CDIR"
+  lxc-start --daemon -n $ROOTFSNAME -f ${ROOTFSNAME}/config -P $CDIR
+  echo lxc-wait -n $ROOTFSNAME -s RUNNING -P $CDIR
+  lxc-wait -n $ROOTFSNAME -s RUNNING -P $CDIR
+  sleep 3
+  echo lxc-attach -n $ROOTFSNAME -P $CDIR -- dhclient eth0
+  lxc-attach -n $ROOTFSNAME -P $CDIR -- dhclient eth0
+  echo lxc-attach -n $ROOTFSNAME -P $CDIR -- ifconfig eth0
+  lxc-attach -n $ROOTFSNAME -P $CDIR -- ifconfig eth0
+  echo lxc-attach -n $ROOTFSNAME -P $CDIR -- ping -c 3 www.dit.upm.es
+  lxc-attach -n $ROOTFSNAME -P $CDIR -- ping -c 3 www.dit.upm.es
+  lxc-attach -n $ROOTFSNAME -P $CDIR -- apt-get update
+  echo lxc-attach -n $ROOTFSNAME -P $CDIR -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y install $PACKAGES"
+  lxc-attach -n $ROOTFSNAME -P $CDIR -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y install $PACKAGES"
+
+  # Create /dev/net/tun device
+  lxc-attach -n $ROOTFSNAME -P $CDIR -- mkdir /dev/net 
+  lxc-attach -n $ROOTFSNAME -P $CDIR -- mknod /dev/net/tun c 10 200 
+  lxc-attach -n $ROOTFSNAME -P $CDIR -- chmod 666 /dev/net/tun 
+
+}
+
+function create_rootfs_tgz {
+  echo "-----------------------------------------------------------------------"
+  echo "Creating rootfs tgz file..."
+  rm -f $BASEROOTFSNAME.tgz
+  tmpfile=$(mktemp)
+  find ${ROOTFSNAME} -type s > $tmpfile 
+  #cat $tmpfile
+  size=$(du -sb --apparent-size ${ROOTFSNAME} | awk '{ total += $1 - 512; }; END { printf "%.0f", total*1020/1000 }')
+  LANG=C tar --numeric-owner -cpf - ${ROOTFSNAME} -X $tmpfile | pv -p -s $size | gzip > ${ROOTFSNAME}.tgz
+  for LINK in $ROOTFSLINKNAME; do
+    rm -f $LINK
+    ln -s ${ROOTFSNAME} $LINK
+  done
+}
+
+
+#
+# Main
+#
+
+# move to the directory where the script is located
+cd `dirname $0`
+CDIR=$(pwd)
+
+SCRIPTNAME=$( basename $0 )
+LOGFILE=${CDIR}/${SCRIPTNAME}.log
+
+# Trick to log script output to $LOGFILE using script command 
+# https://stackoverflow.com/questions/5985060/bash-script-using-script-command-from-a-bash-script-for-logging-a-session
+[ -z "$TYPESCRIPT" ] && TYPESCRIPT=1 exec /usr/bin/script ${LOGFILE} -c "TYPESCRIPT=1  ${CDIR}/$SCRIPTNAME $*"
+
+echo "-----------------------------------------------------------------------"
+echo "Creating VNX LXC rootfs:"
+echo "  Base rootfs:  $BASEROOTFSNAME"
+echo "  New rootfs:   $ROOTFSNAME"
+echo "  Rootfs link:  $ROOTFSLINKNAME"
+echo "  Packages to install: $PACKAGES"
+echo "  Logfile:      ${SCRIPTNAME}.log"
+echo "-----------------------------------------------------------------------"
+
+create_new_rootfs
+start_and_install_packages 
+customize_rootfs
+lxc-stop -n $ROOTFSNAME -P $CDIR # Stop the VM
+customize_config
+rm -f lxc-monitord.log # Delete log of the VM
+create_rootfs_tgz
+
+echo "...done"
+echo "-----------------------------------------------------------------------"

@@ -1,0 +1,52 @@
+#!/bin/bash
+
+#  This file is part of the Virtual Networks over LinuX (VNX) Project distribution.
+#  (www: http://www.dit.upm.es/vnx - e-mail: vnx@dit.upm.es)
+#
+#  Author: David Fernandez (david@dit.upm.es)
+#  Departamento de Ingenieria de Sistemas Telematicos (DIT)
+#  Universidad Politecnica de Madrid
+#  SPAIN
+#
+#  This script creates a new controller filesystem by merging the original controller
+#  rootfs with the changes saved after scenario shutdown.
+#
+
+ROOTFSNAME=vnx_rootfs_lxc_ubuntu64-22.04-v025-openstack-controller-cfgd
+ROOTFSDIR=mnt
+ROOTFSLINKNAME="rootfs_lxc_ubuntu64-ostack-controller"
+
+VMNAME=controller
+SCENARIONAME=$( cat ../openstack_lab.xml | grep scenario_name | sed -n 's:.*<scenario_name>\(.*\)</scenario_name>.*:\1:p' )
+VNXDIR=$( vnx | grep "VNX dir=" | sed -e 's/.*VNX dir=//' )
+CONTROLLERDIR=${VNXDIR}/scenarios/${SCENARIONAME}/vms/${VMNAME}
+
+
+function create_rootfs_tgz {
+  echo "-----------------------------------------------------------------------"
+  echo "Creating rootfs tgz file..."
+  tmpfile=$(mktemp)
+  find ${ROOTFSDIR} -type s > $tmpfile 
+  cat $tmpfile
+  size=$(du -sb --apparent-size ${ROOTFSDIR} | awk '{ total += $1 - 512; }; END { printf "%.0f", total*1020/1000 }')
+  LANG=C tar --numeric-owner -cpf - ${ROOTFSDIR} -X $tmpfile --transform "s|^mnt|${ROOTFSNAME}|" | pv -p -s $size | gzip > ${ROOTFSNAME}.tgz
+}
+
+function create_links {
+  for LINK in $ROOTFSLINKNAME; do
+    rm -f $LINK
+    ln -s ${ROOTFSNAME} $LINK
+  done
+}
+
+
+pushd $CONTROLLERDIR 
+create_rootfs_tgz
+popd
+create_links
+mv $CONTROLLERDIR/${ROOTFSNAME}.tgz .
+# delete old directory
+rm -rf ${ROOTFSNAME}
+echo tar --numeric-owner -xzpf ${ROOTFSNAME}.tgz
+tar --numeric-owner -xzpf ${ROOTFSNAME}.tgz
+
