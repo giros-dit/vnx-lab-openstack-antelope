@@ -12,7 +12,7 @@ Description: This is an Openstack tutorial scenario designed to experiment with 
                - one controller
                - one network node
                - two compute nodes
-             Openstack version used: Stein.
+             Openstack version used: Antelope
              The network configuration is based on the one named "Classic with Open vSwitch" described here:
                   http://docs.openstack.org/liberty/networking-guide/scenario-classic-ovs.html
 
@@ -853,6 +853,13 @@ Copyright(C) 2023 Departamento de Ingenieria de Sistemas Telematicos (DIT)
     </exec>
 
     <exec seq="step999" type="verbatim">
+        # Change horizon port to 8080
+        sed -i 's/Listen 80/Listen 8080/' /etc/apache2/ports.conf
+        sed -i 's/VirtualHost \*:80/VirtualHost *:8080/' /etc/apache2/sites-enabled/000-default.conf
+        systemctl restart apache2
+        # Change Skyline to port 80
+        sed -i 's/0.0.0.0:9999/0.0.0.0:80/' /etc/nginx/nginx.conf
+        systemctl restart nginx
         systemctl restart skyline-apiserver
     </exec>
 

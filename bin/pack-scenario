@@ -1,13 +1,14 @@
 #!/bin/bash
 
 SCENARIO=openstack_lab-antelope_4n_classic_ovs.xml
-VERS='02'
+VERS='03'
 
 # Move to the upper directory where this script is
 cdir=$( dirname $0 )
 cd $cdir/..
 
-vnx --pack $SCENARIO \
+sudo vnx \
+    --pack $SCENARIO \
     --pack-version $VERS \
     --pack-add-files \
         00-readme.txt 00-readme-admin.txt \
