@@ -21,9 +21,9 @@ Author:      David Fernandez (david.fernandez@upm.es)
 This file is part of the Virtual Networks over LinuX (VNX) Project distribution. 
 (www: http://www.dit.upm.es/vnx - e-mail: vnx@dit.upm.es) 
 
-Copyright(C) 2023 Departamento de Ingenieria de Sistemas Telematicos (DIT)
+Copyright(C) 2023   Departamento de Ingenieria de Sistemas Telematicos (DIT)
 	                Universidad Politecnica de Madrid (UPM)
-                  SPAIN
+                    SPAIN
 -->
 
 <vnx xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -979,7 +979,7 @@ Copyright(C) 2023 Departamento de Ingenieria de Sistemas Telematicos (DIT)
         # Create virtual machine
         mkdir -p /root/keys
         openstack keypair create vm4 > /root/keys/vm4
-        openstack server create --flavor m1.smaller --image jammy-server-cloudimg-amd64-vnx vm4 --nic net-id=net0 --key-name vm4
+        openstack server create --flavor m1.smaller --image jammy-server-cloudimg-amd64-vnx vm4 --nic net-id=net0 --key-name vm4 --property VAR1=2 --property VAR2=3
         # Assign floating IP address to vm4
         #openstack ip floating add $( openstack ip floating create ExtNet -c ip -f value ) vm4
         openstack server add floating ip vm4 $( openstack floating ip create ExtNet -c floating_ip_address -f value )
@@ -1072,8 +1072,6 @@ Copyright(C) 2023 Departamento de Ingenieria de Sistemas Telematicos (DIT)
   -->
   <vm name="network" type="lxc" arch="x86_64">
     <filesystem type="cow">filesystems/rootfs_lxc_ubuntu64-ostack-network</filesystem>
-  <!--vm name="network" type="libvirt" subtype="kvm" os="linux" exec_mode="sdisk" arch="x86_64">
-    <filesystem type="cow">filesystems/rootfs_kvm_ubuntu64-ostack-network</filesystem-->
     <mem>1G</mem>
     <shareddir root="/root/shared">shared</shareddir>
     <if id="1" net="MgmtNet">
